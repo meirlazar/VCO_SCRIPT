@@ -1,0 +1,556 @@
+#!/bin/bash
+# Written by Meir Lazar
+# Version: 4.8 11/10/2015
+# Purpose: Version Control for Linux Filesystems
+# Instructions: Add this script to the /usr/local/bin or /usr/bin folder 
+# and use this executable instead of your editor to maintain version control.
+
+########################################################
+########################################################
+
+# Initial Checks to Verify proper usage of the command
+if [[ "$#" -ne 1 ]]; then clear; echo "Usage: `basename $0` {filename.ext}"; exit 1; fi
+
+
+########################################################
+########################################################
+
+TRAPERROR () {
+echo "Script had an error at line $1 with exit code $2"
+if [ $1 -lt 15 ]; then echo "Script had an error at line $1 with exit code $2" 
+elif [ $1 -ge 15 ]; then echo "Script had a FATAL error at line $1 with exit code $2"
+exit $2
+fi
+}
+
+########################################################
+########################################################
+
+trap 'TRAPERROR ${LINENO} $?' ERR  
+
+FILE=$(basename $1)
+DIR=$(dirname $1)
+LOCK=LCK
+VCDIR=.vc
+TTNS=2
+
+########################################################
+########################################################
+
+function DEPCHECKS () {
+
+# Check if file exists
+if ! [[ -f $DIR/$FILE ]]; then touch $DIR/$FILE; fi
+
+# Check the permissions of this file
+if ! [[ -w $DIR/$FILE ]]; then echo "Error: $FILE must be writeable by the current user"; exit 1; fi
+
+# Make VC subdirectory if necessary
+if [ ! -d $DIR/$VCDIR ]; then mkdir -p $DIR/$VCDIR; fi
+
+# Count the number of revisions for file.
+COUNT=$(find $DIR/$VCDIR -maxdepth 1 -name "$FILE.*" -type f | egrep -v '*.$LOCK|*.ORIGINAL' | wc -l)
+
+# Find the date and time of last revision
+LASTMOD=$(stat -c %y $DIR/$FILE | cut -d"." -f1)
+if [[ -z $LASTMOD ]]; then LASTMOD=NEVER; fi 
+}
+
+########################################################
+########################################################
+
+function EDITORCHECK () {
+	
+if [[ -f ~/.vcoeditor ]]; then EDITOR=$(cat ~/.vcoeditor); fi
+
+until [[ -f ~/.vcoeditor ]]; do
+
+tput clear; tput cup 2 10; tput setaf 3; echo "L I N U X - V E R S I O N - C O N T R O L"
+tput sgr0; tput cup 4 19; tput rev; echo "E D I T O R - M E N U"
+tput sgr0; tput setaf 7; tput cup 6 15; echo "FileName: $FILE"
+tput cup 7 15; echo "Number of Revisions: $COUNT"
+tput cup 8 15; echo "Latest Change on: $LASTMOD"
+tput sgr0; tput setaf 6; tput cup 10 15; echo "Choose the default editor to use."
+tput cup 12 15; echo "1. vim"
+tput cup 13 15; echo "2. vi"
+tput cup 14 15; echo "3. nano"
+tput cup 15 15; echo "4. gedit"
+tput cup 16 15; echo "5. geany"
+tput bold; tput setaf 1; tput cup 19 15; read -p "Enter your choice [1-5]:" CHOICE5
+########################
+tput clear; tput sgr0; tput rc
+
+case $CHOICE5 in
+1 ) [[ -f /usr/bin/vim ]] && (echo "/usr/bin/vim" > ~/.vcoeditor; EDITOR=$(cat ~/.vcoeditor));;
+2 ) [[ -f /usr/bin/vi ]] && (echo "/usr/bin/vi" > ~/.vcoeditor; EDITOR=$(cat ~/.vcoeditor));;
+3 ) [[ -f /usr/bin/nano ]] && (echo "/usr/bin/nano" > ~/.vcoeditor; EDITOR=$(cat ~/.vcoeditor));;
+4 ) [[ -f /usr/bin/gedit ]] && (echo "/usr/bin/gedit" > ~/.vcoeditor; EDITOR=$(cat ~/.vcoeditor));;
+5 ) [[ -f /usr/bin/geany ]] && (echo "/usr/bin/geany" > ~/.vcoeditor; EDITOR=$(cat ~/.vcoeditor));;
+* ) echo "Invalid selection, please try again. You may not have it installed or typed it incorrectly."; sleep $TTNS;;
+esac
+done
+}
+
+########################################################
+########################################################
+# setaf 1=red 2=dk green 3=dk yellow 4=blue 5=violet 6=lt blue 7,8=white 9=green 
+
+##########################################################
+##########################################################
+
+function LOCKFILECHECK () {
+# Check for locked file
+
+while [[ -f $DIR/$VCDIR/$FILE.$LOCK ]]; do
+clear
+tput clear; tput cup 2 10; tput setaf 3; echo "L I N U X - V E R S I O N - C O N T R O L"
+tput sgr0; tput cup 4 19; tput rev; echo "F I L E  L O C K E D - M E N U"
+tput bold; tput cup 6 15; tput sgr0; tput setaf 1; echo "$FILE IS CURRENTLY OPENED OR WASN'T CLOSED PROPERLY."
+tput sgr0; tput setaf 6; tput cup 8 15; echo "Number of Revisions: $COUNT"
+tput cup 9 15; echo "Last Change on: $LASTMOD"
+tput sgr0; tput setaf 9; tput cup 12 15; echo "1. Delete the LOCKED file, last changes will be destroyed"
+tput cup 13 15; echo "2. Save/Commit LOCKED file changes and write comments now."
+tput cup 14 15; echo "3. Open the LOCKED file and continue editing."
+tput cup 15 15; echo "4. Quit, file is probably opened by another user."
+tput bold; tput cup 19 15; read -p "Enter your choice [1-5]:" CHOICE2
+########################
+tput clear; tput sgr0; tput rc
+
+case $CHOICE2 in
+1 ) rm -f $DIR/$VCDIR/$FILE.$LOCK;;
+2 ) CHECKIN;;
+3 ) CHECKOUT;;
+4 ) CLEANUP;;
+* ) echo "Invalid Selection, please try again"; sleep $TTNS;;
+esac
+done
+}
+
+##########################################################
+##########################################################
+
+function CHECKOUT () {
+	
+# Make an base/original copy of the file
+if [[ ! -f $DIR/$VCDIR/$FILE.ORIGINAL ]]; then cp -np $DIR/$FILE $DIR/$VCDIR/$FILE.ORIGINAL; fi
+
+# This will be the temporary file created for editing
+if [[ ! -f $DIR/$FILE ]]; then touch $DIR/$FILE; fi
+cp $DIR/$FILE $DIR/$VCDIR/$FILE.$LOCK
+	
+tput clear; tput cup 2 10; tput setaf 3; tput bold; echo "L I N U X - V E R S I O N - C O N T R O L"
+tput sgr0; tput cup 4 19; tput rev; echo "C H E C K O U T - M E N U"
+tput sgr0; tput setaf 7; tput cup 6 15; echo "FileName: $FILE"
+tput cup 7 15; echo "Number of Revisions: $COUNT"
+tput cup 8 15; echo "Latest Change on: $LASTMOD"
+########################
+tput bold; tput setaf 1; tput cup 12 15
+echo "Be sure to properly close/save $FILE before continuing..."
+sleep $TTNS
+$EDITOR $DIR/$VCDIR/$FILE.$LOCK +1
+wait  
+}
+
+##########################################################
+##########################################################
+
+function CHECKIN () {
+
+	
+tput clear; tput cup 2 10; tput setaf 3; tput bold; echo "L I N U X - V E R S I O N - C O N T R O L"
+tput sgr0; tput cup 4 19; tput rev; echo "C H E C K  I N - M E N U"
+tput sgr0; tput setaf 7; tput cup 6 15; echo "FileName: $FILE"
+tput cup 7 15; echo "Number of Revisions: $COUNT"
+tput cup 8 15; echo "Latest Change on: $NOW"
+########################
+tput bold; tput setaf 1; tput cup 12 15
+echo "Editing has been completed on $FILE. Checking back in."
+
+diff $DIR/$FILE $DIR/$VCDIR/$FILE.$LOCK > /dev/null
+if [[ $? = 0 ]]; then
+tput bold; tput setaf 4; tput cup 14 15
+echo "No Changes were made."
+sleep $TTNS
+rm -f $DIR/$VCDIR/$FILE.$LOCK
+return
+fi
+
+COUNT=$[COUNT+1]
+NOW=$(date +"%F_%T")
+
+tput bold; tput setaf 4; tput cup 14 15
+read -p "Type in your comments": COMMENTS
+
+
+VC_COMMENT=$(grep -c "### VERSION CONTROL ###" $DIR/$VCDIR/$FILE.$LOCK)
+BASH_COMMENT=$(grep -c '#!/bin/bash' $DIR/$VCDIR/$FILE.$LOCK)
+
+# If there is a version control statement in the doc already, add the comments under it
+if ! [[ $VC_COMMENT = 0 ]]; then sed -i "/### VERSION CONTROL ###/a  ### $NOW REVISION:$COUNT COMMENTS: $COMMENTS ###" $DIR/$VCDIR/$FILE.$LOCK; 
+elif ! [[ $BASH_COMMENT = 0 ]]; then 
+sed -i '/#!\/bin\/bash/a ### VERSION CONTROL ###' $DIR/$VCDIR/$FILE.$LOCK; 
+sed -i "/### VERSION CONTROL ###/a  ### $NOW REVISION:$COUNT COMMENTS: $COMMENTS ###" $DIR/$VCDIR/$FILE.$LOCK;
+else 
+sed -i "1i ### VERSION CONTROL ###" $DIR/$VCDIR/$FILE.$LOCK
+sed -i "/### VERSION CONTROL ###/a  ### $NOW REVISION:$COUNT COMMENTS: $COMMENTS ###" $DIR/$VCDIR/$FILE.$LOCK 
+fi
+
+#sed -i "1i ### $NOW REVISION:$COUNT COMMENTS: $COMMENTS ###" $DIR/$VCDIR/$FILE.$LOCK
+
+cp $DIR/$VCDIR/$FILE.$LOCK $DIR/$VCDIR/$FILE.$NOW
+mv $DIR/$VCDIR/$FILE.$LOCK $DIR/$FILE
+}
+
+##########################################################
+##########################################################
+
+function REVERT () { 
+
+tput clear; tput cup 2 10; tput setaf 3; tput bold; echo "L I N U X - V E R S I O N - C O N T R O L"
+tput sgr0; tput cup 4 19; tput rev; echo "R E V E R T - M E N U";
+tput sgr0; tput setaf 7; tput cup 6 15; echo "FileName: $FILE"
+tput cup 7 15; echo "Number of Revisions: $COUNT"
+tput cup 8 15; echo "Latest Change on: $LASTMOD"
+########################
+if [[ $COUNT = 0 ]]; then 
+	tput bold; tput setaf 1; tput cup 10 15
+	echo "Cannot revert to an older revision, none exist."
+	sleep $TTNS
+	return
+fi
+
+tput sgr0; tput setaf 6; tput cup 10 15
+echo "Please Note: Reverting to an older revision"
+tput cup 11 15
+echo "will not remove newer versions."
+tput cup 12 15
+echo -e "Files are listed as FILENAME.YYYY-MM-DD_HH:mm:SS\n"
+
+tput setaf 4
+find $DIR/$VCDIR -maxdepth 1 -name "$FILE.*" -type f | sort -d | while read name; do basename $name; done
+echo ""
+
+tput setaf 2
+echo -e "Type the filename you want to revert to\nM to return to the MAIN MENU\nQ to Quit\n"
+read -p "Selection": OLDFILE
+
+case $OLDFILE in
+[mM] ) return;;
+[qQ] ) CLEANUP;;
+esac
+
+clear 
+echo "Reverting $FILE to $OLDFILE..."
+sleep $TTNS
+clear
+cp -f $DIR/$VCDIR/$OLDFILE $DIR/$FILE
+if [[ $? = 0 ]]; then 
+echo "SUCCESS! $FILE has been reverted to $OLDFILE"
+sleep $TTNS
+else
+echo "FAILED! $FILE did not revert, you may have typed it incorrectly."
+sleep $TTNS
+fi 
+}
+
+##########################################################
+##########################################################
+
+function MOVE () {
+	
+unset NEWDIR 
+
+while [[ -z $NEWDIR ]]; do
+
+tput clear; tput cup 2 10; tput setaf 3; tput bold; echo "L I N U X - V E R S I O N - C O N T R O L"
+tput sgr0; tput cup 4 19; tput rev; echo "M O V E - M E N U"
+tput sgr0; tput setaf 7; tput cup 6 15; echo "FileName: $FILE"
+tput cup 7 15; echo "Number of Revisions: $COUNT"
+tput cup 8 15; echo "Latest Change on: $LASTMOD"
+tput sgr0; tput setaf 6; tput cup 10 15; echo "Please Note: Moving a file will move"
+tput cup 11 15; echo "all associated files and previous versions."
+tput setaf 2; echo -e "\nType the new Directory for $FILE to be moved (full path, no leading slash)\nM to return to the MAIN MENU\nQ to Quit\n"
+read -p "Selection": NEWDIR
+
+case $NEWDIR in
+[mM] ) return;;
+[qQ] ) CLEANUP;;
+esac
+ 
+if ! [[ -d $NEWDIR ]]; then echo "$NEWDIR does not exist, please create it before using this menu"; sleep $TTNS; return; fi
+if ! [[ -d $NEWDIR/$VCDIR ]]; then mkdir -p $NEWDIR/$VCDIR || (echo "Failed to make $NEWDIR/$VCDIR"; sleep $TTNS; return); fi
+if ! [[ -f $NEWDIR/$FILE ]]; then mv $DIR/$FILE $NEWDIR/ || (echo "Failed to make move $FILE to $NEWDIR"; sleep $TTNS; return); fi
+mv $DIR/$VCDIR/$FILE.* $NEWDIR/$VCDIR/ || (echo "Failed to make move $name to $NEWDIR/$VCDIR/"; sleep $TTNS; continue)
+DIR=$NEWDIR
+done
+}
+
+
+##########################################################
+##########################################################
+
+function RENAME () {
+
+unset NEWNAME 
+
+while [[ -z $NEWNAME ]]; do
+tput clear; tput cup 2 10; tput setaf 3; tput bold; echo "L I N U X - V E R S I O N - C O N T R O L"
+tput sgr0; tput cup 4 19; tput rev; echo "R E N A M E - M E N U"
+tput sgr0; tput setaf 7; tput cup 6 15; echo "FileName: $FILE"
+tput cup 7 15; echo "Number of Revisions: $COUNT"
+tput cup 8 15; echo "Latest Change on: $LASTMOD"
+tput sgr0; tput setaf 6; tput cup 10 15; echo "Please Note: Renaming a file will change"
+tput cup 11 15; echo "all associated files and previous versions."
+tput setaf 2; echo -e "\nType the new name you want for the file\nM to return to the MAIN MENU\nQ to Quit\n"
+read -p "Selection": NEWNAME
+
+case $NEWNAME in
+[mM] ) return;;
+[qQ] ) CLEANUP;;
+esac
+ 
+mv $DIR/$FILE $DIR/$NEWNAME || (echo "Failed to make rename $FILE to $NEWNAME"; sleep $TTNS; return)
+rename -v "s/$FILE/$NEWNAME/" $DIR/$VCDIR/$FILE.*
+FILE=$NEWNAME
+done
+}
+
+##########################################################
+##########################################################
+
+function DELETE () {
+	
+while [[ -f $DIR/$FILE ]]; do 
+tput clear; tput cup 2 10; tput setaf 3; tput bold; echo "L I N U X - V E R S I O N - C O N T R O L"
+tput sgr0; tput cup 4 19; tput rev; echo "D E L E T E - M E N U"
+tput sgr0; tput setaf 7; tput cup 6 15; echo "FileName: $FILE"
+tput cup 7 15; echo "Number of Revisions: $COUNT"
+tput cup 8 15; echo "Latest Change on: $LASTMOD"
+tput sgr0; tput setaf 6; tput cup 10 15; echo "Please Note: Deleting a file will remove"
+tput cup 11 15; echo "all associated files and previous versions."
+tput setaf 2; echo -e "\nType YES to delete $FILE\nM to return to the MAIN MENU\nQ to Quit\n"
+read -p "Selection": DELSURE
+
+case $DELSURE in
+[mM] ) return;;
+[qQ] ) CLEANUP;;
+[Yy][Ee][Ss] ) rm -f $DIR/$FILE || (echo "Failed to make rename $FILE to $NEWNAME"; sleep $TTNS; return); 
+rm -f $DIR/$VCDIR/$FILE.* || (echo "Failed to make rename $FILE to $NEWNAME"; sleep $TTNS; return);;
+* ) echo "Invalid selection, please try again."; sleep $TTNS;;
+esac
+done
+}
+
+
+##########################################################
+##########################################################
+
+function PREVIOUS () {
+
+tput clear; tput cup 2 10; tput setaf 3; tput bold; echo "L I N U X - V E R S I O N - C O N T R O L"
+tput sgr0; tput cup 4 19; tput rev; echo "S H O W   A L L   V E R S I O N S - M E N U"
+tput sgr0; tput setaf 7; tput cup 6 15; echo "FileName: $FILE"
+tput cup 7 15; echo "Number of Revisions: $COUNT"
+tput cup 8 15; echo "Latest Change on: $LASTMOD"
+
+if [[ $COUNT = 0 ]]; then 
+	tput bold; tput setaf 1; tput cup 10 15
+	echo "Cannot view older revisions, none exist."
+	sleep $TTNS
+	return
+fi
+
+tput sgr0; tput setaf 6; tput cup 10 15; echo -e "Please choose from the following;"
+tput cup 12 15; echo "M to return to the MAIN MENU"
+tput cup 13 15; echo -e "Q to Quit\n\n"
+
+
+find $DIR/$VCDIR -maxdepth 1 -name "$FILE.*" -type f | egrep -v "*.$LOCK|*.ORIGINAL" | sort -d | while read name; do basename $name; done
+echo -e "\n"
+read -p "Selection":  CHOICE4
+
+case $CHOICE4 in
+[mM]) return;;
+[qQ]) CLEANUP;;
+esac
+}
+
+##########################################################
+##########################################################
+
+function SETDIFFTOOL () {
+	
+while [[ -z $DIFFTOOL ]]; do	
+
+tput clear; tput cup 2 10; tput setaf 3; tput bold; echo "L I N U X - V E R S I O N - C O N T R O L"
+tput sgr0; tput cup 4 19; tput rev; echo "S E T  D I F F  T O O L - M E N U"
+tput sgr0; tput setaf 7; tput cup 6 15; echo "FileName: $FILE"
+tput cup 7 15; echo "Number of Revisions: $COUNT"
+tput cup 8 15; echo "Latest Change on: $LASTMOD"
+
+if [[ $COUNT < 2 ]]; then 
+	tput bold; tput setaf 1; tput cup 10 15
+	echo "Cannot compare older revisions, less than 2 exist."
+	sleep $TTNS
+	return
+fi
+
+tput sgr0; tput setaf 6; tput cup 10 15; echo "Choose the tool to do a differential"
+tput cup 11 15; echo "1. vimdiff"
+tput cup 12 15; echo "2. diff"
+tput cup 13 15; echo "3. wdiff"
+tput cup 14 15; echo "4. difff"
+tput cup 15 15; echo "5. MAIN MENU"
+tput cup 16 15; echo "6. Quit"
+ 
+tput bold; tput setaf 1; tput cup 18 15
+read -p "Enter your selection [1-6]:" COMPCHOICE
+ 
+tput clear; tput sgr0; tput rc
+
+case $COMPCHOICE in
+1 ) DIFFTOOL="${DIFFTOOL:=vimdiff}";;
+2 ) DIFFTOOL="${DIFFTOOL:=diff}";;
+3 ) DIFFTOOL="${DIFFTOOL:=wdiff}";;
+4 ) DIFFTOOL="${DIFFTOOL:=difff}";;
+[mM]|5 ) return;;
+[qQ]|6 ) CLEANUP;;
+* ) echo "Invalid selection, please try again."; sleep $TTNS;;
+esac
+
+done
+COMPARE
+}
+
+##########################################################
+##########################################################
+
+
+function COMPARE () {
+
+tput clear; tput cup 2 10; tput setaf 3; tput bold; echo "L I N U X - V E R S I O N - C O N T R O L"
+tput sgr0; tput cup 4 19; tput rev; echo "C O M P A R E - M E N U"
+tput sgr0; tput setaf 7; tput cup 6 15; echo "FileName: $FILE"
+tput cup 7 15; echo "Number of Revisions: $COUNT"
+tput cup 8 15; echo "Latest Change on: $LASTMOD"
+tput cup 10 15; tput bold; tput setaf 4; echo -e "Specify two of the files listed below to compare\n"
+
+tput setaf 6; 
+find $DIR/$VCDIR -maxdepth 1 -name "$FILE.*" -type f | sort -d | while read name; do basename $name; done
+echo ""
+
+tput setaf 7
+read -p "1st file name": DIFF1
+read -p "2nd file name": DIFF2
+
+tput clear; tput sgr0; tput rc
+clear
+$DIFFTOOL $DIR/$VCDIR/$DIFF1 $DIR/$VCDIR/$DIFF2
+read -p "Press Enter to return to the MAIN MENU..."
+}
+
+##########################################################
+##########################################################
+
+function VIEW () { 
+	
+tput clear; tput cup 2 10; tput setaf 3; tput bold; echo "L I N U X - V E R S I O N - C O N T R O L"
+tput sgr0; tput cup 4 19; tput rev; echo "F I L E  V I E W - M E N U"
+tput sgr0; tput setaf 7; tput cup 6 15; echo "FileName: $FILE"
+tput cup 7 15; echo "Number of Revisions: $COUNT"
+tput cup 8 15; echo "Latest Change on: $LASTMOD"
+
+if [[ $COUNT = 0 ]]; then 
+	tput bold; tput setaf 1; tput cup 10 15
+	echo "Cannot view older revisions, none exist."
+	sleep $TTNS
+	return
+fi
+
+tput sgr0; tput setaf 4; tput cup 7 15
+echo "These are the revisions that you can view;"
+
+tput sgr0
+echo ""
+find $DIR/$VCDIR -maxdepth 1 -name "$FILE.*" -type f | sort -d | while read name; do basename $name; done
+
+ 
+tput bold;tput setaf 6
+echo -e "\nType in the filename to view that file\nM to return to the MAIN MENU\nQ to Quit\n"
+read -p "Selection": CHOICE3
+tput clear; tput sgr0; tput rc
+
+case $CHOICE3 in
+[mM]) return;;
+[qQ]) CLEANUP;;
+esac
+
+if [[ -f $DIR/$VCDIR/$CHOICE3 ]]; then
+less $DIR/$VCDIR/$CHOICE3 
+wait
+else 
+echo "$CHOICE3 does not exist."
+sleep $TTNS
+fi
+}
+
+
+##########################################################
+##########################################################
+
+function CLEANUP () {
+tput clear; tput sgr0; tput rc; tput setaf 9
+clear
+QUIT=1
+exit 0
+}
+
+##########################################################
+##########################################################
+
+until [[ $QUIT = 1 ]]; do
+
+unset CHOICE1
+unset COUNT
+
+clear
+DEPCHECKS
+LOCKFILECHECK
+# MAIN MENU
+
+tput clear; tput cup 2 10; tput setaf 3; tput bold; echo "L I N U X - V E R S I O N - C O N T R O L v4.7.1"
+tput sgr0; tput cup 4 19; tput rev; echo "M A I N - M E N U"
+tput sgr0; tput setaf 7; tput cup 6 15; echo "FileName: $FILE"
+tput cup 7 15; echo "Number of Revisions: $COUNT"
+tput cup 8 15; echo "Latest Change on: $LASTMOD"
+tput sgr0; tput setaf 6; tput cup 10 15; echo "1. CHECKOUT and edit"
+tput cup 11 15; echo "2. REVERT to a previous version"
+tput cup 12 15; echo "3. File list of PREVIOUS versions"
+tput cup 13 15; echo "4. COMPARE the changes of two versions"
+tput cup 14 15; echo "5. VIEW one of the older versions"
+tput cup 15 15; echo "6. Change the default EDITOR"
+tput cup 16 15; echo "7. MOVE a file to another directory"
+tput cup 17 15; echo "8. RENAME a file"
+tput cup 18 15; echo "9. DELETE a file"
+tput cup 19 15; echo "Q - Quit"
+tput bold; tput setaf 1; tput cup 22 15; read -p "Enter your choice:" CHOICE1
+ 
+tput clear; tput sgr0; tput rc
+
+case $CHOICE1 in
+1 ) EDITORCHECK; CHECKOUT; CHECKIN;;
+2 ) REVERT;;
+3 ) PREVIOUS;;
+4 ) SETDIFFTOOL;;
+5 ) VIEW;;
+6 ) rm -f ~/.vcoeditor; EDITORCHECK;;
+7 ) MOVE;;
+8 ) RENAME;;
+9 ) DELETE;;
+[qQ] ) CLEANUP;;
+* ) echo "Invalid selection, please try again."; sleep $TTNS;;
+esac
+
+done
+##########################################################
+##########################################################
