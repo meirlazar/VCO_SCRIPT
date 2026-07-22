@@ -9,11 +9,13 @@
 TARGET="$1"; FILE=$(basename "$TARGET"); DIR=$(dirname "$TARGET")
 VCDIR=".vc"; LOCK="LCK"; TTNS=2
 
-trap 'err_handler $LINENO $?' ERR
 err_handler() {
     logger -t vc "Error on line $1 (Exit code: $2)"
     echo "Script error at line $1 with exit code $2" >&2
 }
+
+trap 'err_handler $LINENO $?' ERR
+
 
 check_deps() {
     [[ -f "$DIR/$FILE" ]] || touch "$DIR/$FILE"
